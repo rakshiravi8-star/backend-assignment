@@ -99,6 +99,34 @@ class AuthFlowTests(TestCase):
 		self.assertFalse(user.email_otp.check_otp('111111'))
 		self.assertTrue(user.email_otp.check_otp('222222'))
 
+	def test_api_latest_otp_wins_old_code_rejected_new_code_accepted(self):
+		with patch('users.models.EmailOTP.generate_raw_otp', return_value='111111'):
+			first = self.client.post('/api/auth/signup/', {
+				'email': 'api-resend@example.com', 'password': 'StrongPass123!', 'role': 'SEEKER',
+			})
+		self.assertEqual(first.status_code, 201)
+		self.assertNotIn('otp', first.data)
+
+		user = User.objects.get(email='api-resend@example.com')
+		user.email_otp.last_sent_at = timezone.now() - timedelta(seconds=31)
+		user.email_otp.save(update_fields=['last_sent_at'])
+		with patch('users.models.EmailOTP.generate_raw_otp', return_value='222222'):
+			second = self.client.post('/api/auth/signup/', {
+				'email': 'api-resend@example.com', 'password': 'StrongPass123!', 'role': 'SEEKER',
+			})
+		self.assertEqual(second.status_code, 200)
+		self.assertNotIn('otp', second.data)
+
+		old_attempt = self.client.post('/api/auth/verify-email/', {
+			'email': user.email, 'otp': '111111',
+		})
+		self.assertEqual(old_attempt.status_code, 400)
+		self.assertEqual(old_attempt.data['code'], 'invalid_otp')
+		new_attempt = self.client.post('/api/auth/verify-email/', {
+			'email': user.email, 'otp': '222222',
+		})
+		self.assertEqual(new_attempt.status_code, 200)
+
 	def test_unverified_and_wrong_password_login_fail_and_refresh_succeeds(self):
 		self.client.post('/api/auth/signup/', {
 			'email': 'login@example.com', 'password': 'StrongPass123!', 'role': 'SEEKER',
