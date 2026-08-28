@@ -1,6 +1,6 @@
 # Events Platform Backend
 
-A Django REST Framework backend for managing users, events, and enrollments, with email verification, JWT authentication, role-based access, event discovery, and capacity-safe enrollment.
+A Django REST Framework backend for managing users, events, and enrollments, with email verification, JWT authentication, role based access, event discovery, and capacity safe enrollment.
 
 The project was built around the assignment requirements, with particular attention to database constraints, authorization, concurrency handling, and automated testing.
 
@@ -12,7 +12,6 @@ The project was built around the assignment requirements, with particular attent
 * PostgreSQL
 * SimpleJWT
 * Django email console backend
-* Git
 
 ## Features
 
@@ -20,7 +19,7 @@ The project was built around the assignment requirements, with particular attent
 
 * Signup using email, password, and role
 * Uses Django's default `User` model
-* Internal username is generated automatically
+* Internal username generated automatically
 * Email verification using a 6-digit OTP
 * OTP expiry and failed-attempt limit
 * OTP resend cooldown
@@ -233,7 +232,7 @@ python manage.py makemigrations --check --dry-run
 python manage.py migrate
 ```
 
-The final verification completed with:
+At the time of final verification, the test suite completed with:
 
 ```text
 16 tests
@@ -269,7 +268,7 @@ Handled API errors follow a consistent structure:
 }
 ```
 
-## Known Limitations & Future Improvements
+## Known Limitations and Future Improvements
 
 The implementation is focused on the requirements of this assignment.
 
@@ -280,7 +279,7 @@ With additional development time, I would improve the project by:
 * Adding API-level rate limiting for authentication and OTP endpoints
 * Adding Docker configuration to simplify setup across environments
 
-These are outside the required assignment scope.
+These improvements are outside the required assignment scope.
 
 ## Assignment Evidence
 
