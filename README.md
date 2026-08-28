@@ -1,327 +1,657 @@
-# Events Platform Backend
+# Events Platform API
 
-A Django REST Framework backend for managing users, events, and enrollments, with email verification, JWT authentication, role based access, event discovery, and capacity safe enrollment.
+A Django REST API for an Events Platform with secure authentication, role-based access control, event discovery, and event enrollment.
 
-The project was built around the assignment requirements, with particular attention to database constraints, authorization, concurrency handling, and automated testing.
+The project focuses on the core requirements of the assignment: **correctness, security, database constraints, concurrency handling, OTP lifecycle management, and automated testing**.
 
-## Tech Stack
+---
 
-* Python
-* Django 6.1
-* Django REST Framework
-* PostgreSQL
-* SimpleJWT
-* Django email console backend
+## 1. Overview
 
-## Features
+The API supports two user roles:
 
-### Authentication
+* **Seeker** — discovers events, enrolls in events, cancels enrollments, and views upcoming/past enrollments.
+* **Facilitator** — creates and manages their own events and can view enrollment and available-seat information.
 
-* Signup using email, password, and role
-* Uses Django's default `User` model
-* Internal username generated automatically
-* Email verification using a 6-digit OTP
-* OTP expiry and failed-attempt limit
-* OTP resend cooldown
-* Latest OTP invalidates the previous OTP
-* Passwords are stored using Django's password hashing
-* Unverified users cannot log in
-* JWT access and refresh tokens
-* JWT refresh endpoint
+The backend uses JWT authentication and email OTP verification before allowing users to log in.
 
-### Roles
+The implementation also addresses the three engineering challenges specified in the assignment:
 
-The application supports two roles:
+1. **Concurrent enrollment with event capacity**
+2. **Cancellation and re-enrollment lifecycle**
+3. **OTP resend and invalidation behaviour**
 
-* **Seeker** — discover events, enroll, cancel enrollment, and view upcoming/past enrollments
-* **Facilitator** — create, update, delete, and list their own events
+---
 
-Role and ownership checks are enforced on the backend.
+## 2. Technology Stack
 
-### Events
+* **Python**
+* **Django**
+* **Django REST Framework**
+* **PostgreSQL**
+* **SimpleJWT**
+* **Django's default User model**
+* **Git / GitHub**
 
-Events contain:
+Email delivery uses Django's development email backend as permitted by the assignment.
 
-* Title
-* Description
-* Language
-* Location
-* Start and end time
-* Optional capacity
-* Creator
-* Created and updated timestamps
+---
 
-Facilitators can manage only their own events.
+## 3. Architecture
 
-Facilitator event lists include active enrollment counts and available-seat counts.
-
-### Event Discovery
-
-Seekers can search and filter events using:
-
-* `q` — searches title and description
-* `location`
-* `language`
-* `starts_after`
-* `starts_before`
-
-List responses use DRF pagination:
+The project follows a Django application structure with separate responsibilities for users, events, shared API behaviour, and project configuration.
 
 ```text
-count
-next
-previous
-results
+backend_assignment/
+│
+├── config/
+│   ├── settings.py
+│   ├── urls.py
+│   ├── asgi.py
+│   └── wsgi.py
+│
+├── users/
+│   ├── models.py
+│   ├── serializers.py
+│   ├── views.py
+│   ├── urls.py
+│   ├── utils.py
+│   ├── tests.py
+│   └── migrations/
+│
+├── events/
+│   ├── models.py
+│   ├── serializers.py
+│   ├── permissions.py
+│   ├── views.py
+│   ├── urls.py
+│   ├── test_event_suite.py
+│   └── migrations/
+│
+├── common/
+│   ├── exceptions.py
+│   └── pagination.py
+│
+├── manage.py
+├── requirements.txt
+├── PROMPT_LOG.md
+├── DECISIONS.md
+└── DEBUGGING.md
 ```
 
-Events are ordered with upcoming events first.
+### Request flow
 
-### Enrollments
+```text
+Client
+   │
+   ▼
+Django URL routing
+   │
+   ▼
+DRF Views
+   │
+   ├── Authentication / JWT
+   ├── Role & ownership checks
+   ├── Input validation
+   ├── Event / enrollment business rules
+   │
+   ▼
+Serializers / Models
+   │
+   ▼
+PostgreSQL
+```
 
-Seekers can:
+The application keeps authentication, authorization, validation, domain logic, persistence, pagination, and error handling separated across the relevant Django components.
 
-* Enroll in an event
+---
+
+# 4. Authentication
+
+The authentication flow is based on:
+
+**Signup → OTP verification → Login → JWT authentication**
+
+### Signup
+
+A user registers with:
+
+* Email
+* Password
+* Role (`Seeker` or `Facilitator`)
+
+A username is not required as signup input.
+
+The newly created account remains unverified until the email OTP is successfully verified.
+
+### OTP verification
+
+A six-digit OTP is generated for email verification.
+
+The OTP implementation includes:
+
+* Expiry
+* Failed-attempt limits
+* Lockout behaviour
+* Resend cooldown
+* Previous OTP invalidation
+* OTP invalidation after successful verification
+
+OTP values are not returned in API responses.
+
+### Login
+
+Only verified users can log in.
+
+Successful authentication returns JWT access and refresh tokens.
+
+### Token refresh
+
+The refresh endpoint allows a valid refresh token to obtain a new access token.
+
+---
+
+# 5. Role-Based Access Control
+
+The backend enforces roles rather than relying on the client.
+
+### Seeker
+
+A seeker can:
+
+* Discover events
+* Search and filter events
+* Enroll in events
 * Cancel an enrollment
 * Re-enroll after cancellation
 * View upcoming enrollments
 * View past enrollments
 
-A canceled enrollment can be reused when the same seeker enrolls again, avoiding duplicate `(event, seeker)` records.
-
-## API Endpoints
-
-### Authentication
-
-```text
-POST /api/auth/signup/
-POST /api/auth/verify-email/
-POST /api/auth/login/
-POST /api/auth/refresh/
-```
-
 ### Facilitator
 
-```text
-GET    /api/facilitator/events/
-POST   /api/facilitator/events/
-GET    /api/facilitator/events/<id>/
-PATCH  /api/facilitator/events/<id>/
-DELETE /api/facilitator/events/<id>/
-```
+A facilitator can:
 
-### Event Discovery and Enrollment
+* Create events
+* View their own events
+* Update their own events
+* Partially update their own events
+* Delete their own events
+* View enrollment and available-seat information
 
-```text
-GET  /api/events/
-POST /api/events/<id>/enroll/
-POST /api/events/<id>/cancel/
-GET  /api/enrollments/?scope=upcoming
-GET  /api/enrollments/?scope=past
-```
+Ownership is enforced on the backend, so a facilitator cannot manage another facilitator's event.
 
-Protected endpoints require:
+---
 
-```text
-Authorization: Bearer <access-token>
-```
+# 6. Events
 
-## Architecture
+An event contains the required domain information including:
 
-The project is organized into three main areas:
+* Title
+* Description
+* Language
+* Location
+* Start time
+* End time
+* Optional capacity
+* Creator
+* Timestamps
 
-```text
-users/
-    Authentication
-    User profiles and roles
-    OTP generation and verification
-    Authentication-related API handling
+Event validation includes checks for required fields, valid values, time consistency, and capacity constraints.
 
-events/
-    Events
-    Enrollments
-    Role and ownership permissions
-    Event discovery
-    Capacity and concurrency handling
+Events can be discovered using search and filtering.
 
-common/
-    Pagination
-    Consistent API error handling
-```
+Supported discovery filters are:
 
-The project keeps Django's default `User` model. Application-specific role information is stored in a related profile.
+* `q`
+* `location`
+* `language`
+* `starts_after`
+* `starts_before`
 
-## Database
+Results use pagination and upcoming-first ordering.
 
-PostgreSQL is used as the primary database.
+---
 
-Migrations are included in:
+# 7. Enrollments
 
-```text
-users/migrations/
-events/migrations/
-```
+Seekers can enroll in available events.
 
-Indexes are included for commonly used event and enrollment queries.
+The enrollment implementation handles:
 
-The application reads the PostgreSQL password from the `POSTGRES_PASSWORD` environment variable and the Django secret key from `DJANGO_SECRET_KEY`.
+* Successful enrollment
+* Duplicate active enrollment
+* Full-capacity events
+* Events without a capacity limit
+* Cancellation
+* Re-enrollment
+* Upcoming enrollments
+* Past enrollments
+* Available-seat calculation
+* Active enrollment counts
 
-No database password or production secret key is stored in the repository.
+The database/application design also supports the required cancellation → re-enrollment lifecycle without creating duplicate active enrollments.
 
-## Setup
+---
 
-### 1. Activate the virtual environment
+# 8. Concurrency Handling
 
-Windows PowerShell:
-
-```powershell
-.\venv\Scripts\Activate.ps1
-```
-
-### 2. Install dependencies
-
-```powershell
-pip install -r requirements.txt
-```
-
-### 3. Configure PostgreSQL
-
-Create the PostgreSQL database used by the project and provide the database password through the environment.
-
-Example:
-
-```powershell
-$env:POSTGRES_PASSWORD="your-password"
-$env:DJANGO_SECRET_KEY="your-development-secret-key"
-```
-
-The PostgreSQL configuration uses:
-
-```text
-Host: localhost
-Port: 5432
-Database: events_platform
-```
-
-### 4. Apply migrations
-
-```powershell
-python manage.py migrate
-```
-
-### 5. Run the development server
-
-```powershell
-python manage.py runserver
-```
-
-The development email backend prints OTP messages to the terminal, so an external email provider is not required for local testing.
-
-## Testing
-
-Run the complete test suite with:
-
-```powershell
-python manage.py test
-```
-
-Additional verification commands:
-
-```powershell
-python manage.py check
-python manage.py makemigrations --check --dry-run
-python manage.py migrate
-```
-
-At the time of final verification, the test suite completed with:
-
-```text
-16 tests
-16 passed
-0 failed
-```
-
-The test suite covers authentication, JWT refresh, OTP expiry, failed-attempt limits, resend behaviour, role enforcement, event CRUD and ownership, discovery filters, pagination, enrollment, cancellation, re-enrollment, and the required concurrency scenario.
-
-### Concurrency Test
-
-The concurrency test covers the assignment scenario:
+The assignment requires the following scenario to be handled safely:
 
 ```text
 Event capacity       = 10
 Existing enrollments = 9
 Concurrent seekers   = 5
-Successful attempts  = 1
-Rejected attempts    = 4
-Final active count   = 10
 ```
 
-Enrollment uses `transaction.atomic()` and locks the event row with `select_for_update()` before checking capacity and creating or reusing the enrollment.
+The backend uses transaction/locking/database logic to ensure that concurrent requests cannot cause the active enrollment count to exceed the event capacity.
 
-## Error Responses
+The automated concurrency test verifies:
 
-Handled API errors follow a consistent structure:
+```text
+5 concurrent enrollment attempts
+        │
+        ▼
+Only 1 additional enrollment succeeds
+        │
+        ▼
+Final active enrollments = 10
+```
+
+The remaining attempts are rejected because the event has reached capacity.
+
+The concurrency strategy and trade-offs are documented separately in `DECISIONS.md`.
+
+---
+
+# 9. API Endpoints
+
+## Authentication
+
+| Method | Endpoint                | Purpose                          |
+| ------ | ----------------------- | -------------------------------- |
+| `POST` | `/api/auth/signup/`     | Register a seeker or facilitator |
+| `POST` | `/api/auth/verify-otp/` | Verify email using OTP           |
+| `POST` | `/api/auth/resend-otp/` | Request a new OTP                |
+| `POST` | `/api/auth/login/`      | Login and obtain JWT tokens      |
+| `POST` | `/api/auth/refresh/`    | Refresh the access token         |
+
+## Events
+
+| Method   | Endpoint            | Purpose                   |
+| -------- | ------------------- | ------------------------- |
+| `GET`    | `/api/events/`      | Discover/search events    |
+| `POST`   | `/api/events/`      | Create an event           |
+| `GET`    | `/api/events/<id>/` | Retrieve an event         |
+| `PUT`    | `/api/events/<id>/` | Update an event           |
+| `PATCH`  | `/api/events/<id>/` | Partially update an event |
+| `DELETE` | `/api/events/<id>/` | Delete an event           |
+
+## Facilitator
+
+| Method | Endpoint                   | Purpose                                             |
+| ------ | -------------------------- | --------------------------------------------------- |
+| `GET`  | `/api/facilitator/events/` | List facilitator events with enrollment information |
+
+## Enrollments
+
+| Method | Endpoint                        | Purpose              |
+| ------ | ------------------------------- | -------------------- |
+| `GET`  | `/api/enrollments/`             | List enrollments     |
+| `POST` | `/api/enrollments/`             | Enroll in an event   |
+| `POST` | `/api/enrollments/<id>/cancel/` | Cancel an enrollment |
+
+### Enrollment scope
+
+The enrollment listing supports the tested scope behaviour:
+
+```text
+/api/enrollments/?scope=upcoming
+```
+
+and the corresponding past-enrollment behaviour.
+
+### Authentication header
+
+Protected endpoints use JWT authentication:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+---
+
+# 10. Pagination
+
+Paginated API responses follow the required DRF structure:
 
 ```json
 {
-    "detail": "message",
+    "count": 0,
+    "next": null,
+    "previous": null,
+    "results": []
+}
+```
+
+The implementation uses:
+
+* `count`
+* `next`
+* `previous`
+* `results`
+
+Pagination behaviour is covered by the automated test suite.
+
+---
+
+# 11. Error Handling
+
+The API uses a consistent error structure where applicable:
+
+```json
+{
+    "detail": "Error description",
     "code": "error_code"
 }
 ```
 
-## Known Limitations and Future Improvements
+The test suite verifies relevant validation, authentication, authorization, and not-found responses.
 
-The implementation is focused on the requirements of this assignment.
+The API avoids exposing unnecessary internal database information through standardized error responses.
 
-With additional development time, I would improve the project by:
+---
 
-* Adding OpenAPI/Swagger documentation for easier API exploration
-* Adding more PostgreSQL integration tests around database constraints and concurrent behaviour
-* Adding API-level rate limiting for authentication and OTP endpoints
-* Adding Docker configuration to simplify setup across environments
+# 12. Database Design
 
-These improvements are outside the required assignment scope.
+The project uses PostgreSQL with Django migrations.
 
-## Assignment Evidence
+The main domain entities are:
 
-The main assignment requirements can be verified directly from the repository:
+```text
+User
+ │
+ ├── Seeker / Facilitator role
+ │
+ └── OTP verification data
 
-| Requirement                          | Where to verify                                |
-| ------------------------------------ | ---------------------------------------------- |
-| Authentication and OTP               | `users/`                                       |
-| Events and enrollments               | `events/`                                      |
-| Concurrency implementation           | `events/views.py`                              |
-| Concurrency test                     | `events/test_event_suite.py`                   |
-| Cancellation and re-enrollment       | `events/models.py`, `events/views.py`          |
-| Re-enrollment test                   | `events/test_event_suite.py`                   |
-| OTP expiry, lockout and resend tests | `users/tests.py`                               |
-| Design decisions                     | `DECISIONS.md`                                 |
-| Debugging issues and fixes           | `DEBUGGING.md`                                 |
-| AI usage and corrections             | `PROMPT_LOG.md`                                |
-| Database migrations                  | `users/migrations/`, `events/migrations/`      |
-| Automated tests                      | `users/tests.py`, `events/test_event_suite.py` |
+Facilitator
+     │
+     └── Event
+            │
+            └── Enrollment
+                   │
+                   └── Seeker
+```
 
-## Required Assignment Documents
+Database migrations include the required schema and indexes for the main event/enrollment queries.
 
-The repository includes all four required documentation files:
+The enrollment design also preserves the required active-enrollment uniqueness while allowing cancellation followed by re-enrollment.
 
-* `README.md` — setup, architecture, API usage, testing, limitations, and future improvements
-* `PROMPT_LOG.md` — material AI prompts, what was used or changed, corrections, and verification
-* `DECISIONS.md` — non-trivial implementation decisions and trade-offs
-* `DEBUGGING.md` — issues encountered, diagnosis, fixes, and verification
+---
 
-The repository also contains the required Django migrations and automated tests.
+# 13. Automated Testing
 
-## Evaluation Notes
+Automated tests cover the major functional, security, and constraint-related behaviours of the application.
 
-For a quick manual evaluation:
+The verified final test run completed successfully:
 
-1. Start PostgreSQL and configure the database credentials.
-2. Run the migrations.
-3. Start the Django development server.
-4. Create a Seeker or Facilitator account using the signup API.
-5. Read the OTP from the development server console.
-6. Verify the email.
-7. Log in to obtain the JWT access token.
-8. Use the access token to test the role-specific event and enrollment APIs.
+```text
+Ran 16 tests in 156.800s
 
-The automated test suite can then be used to verify authentication, authorization, OTP edge cases, event lifecycle, re-enrollment behaviour, and the required concurrency scenario.
+OK
+```
+
+### Final verified result
+
+| Result           |  Count |
+| ---------------- | -----: |
+| Tests discovered | **16** |
+| Passed           | **16** |
+| Failed           |  **0** |
+| Errors           |  **0** |
+| Skipped          |  **0** |
+
+The test suite includes coverage for:
+
+### Authentication
+
+* User signup
+* Seeker/facilitator roles
+* Email verification
+* Unverified login rejection
+* Valid login
+* Invalid credentials
+* JWT refresh
+
+### OTP
+
+* OTP verification
+* OTP expiry
+* Failed attempts
+* Lockout
+* Resend cooldown
+* Resend invalidation
+* Latest-OTP-wins behaviour
+* OTP not returned in API responses
+* OTP lifecycle after successful verification
+
+### Events
+
+* Event creation
+* Event retrieval
+* Event update
+* Event deletion
+* Event ownership
+* Event discovery
+* Search and filters
+* Pagination
+* Validation
+
+### Enrollment
+
+* Successful enrollment
+* Capacity enforcement
+* Duplicate active enrollment
+* Cancellation
+* Re-enrollment
+* Upcoming/past enrollment behaviour
+* Enrollment counts
+* Available seats
+
+### Concurrency
+
+The exact assignment scenario is tested:
+
+```text
+Capacity = 10
+Existing active enrollments = 9
+Concurrent enrollment attempts = 5
+
+Expected:
+1 succeeds
+4 are rejected
+Final active count = 10
+```
+
+### Error and authorization behaviour
+
+The suite also covers authentication and authorization boundaries and standardized error responses.
+
+---
+
+# 14. Engineering Challenges
+
+## Challenge A — Concurrent Enrollment
+
+The implementation protects the event capacity at the backend/database level rather than relying on the client.
+
+The concurrency test demonstrates that five simultaneous enrollment requests cannot push the active enrollment count beyond the configured capacity.
+
+## Challenge B — Cancellation and Re-enrollment
+
+An enrollment can move from active to canceled and subsequently be reused for re-enrollment.
+
+This avoids creating multiple active enrollment records for the same seeker and event while still supporting the required lifecycle.
+
+## Challenge C — OTP Resend
+
+The implementation follows a **latest OTP wins** policy.
+
+When a new OTP is issued, the previous OTP is no longer accepted.
+
+The API-level test verifies:
+
+```text
+OTP 1 requested
+      ↓
+OTP 2 requested
+      ↓
+OTP 1 rejected
+      ↓
+OTP 2 accepted
+```
+
+Neither OTP is exposed in the API response.
+
+---
+
+# 15. Running the Project
+
+## Prerequisites
+
+* Python 3.x
+* PostgreSQL
+* Git
+
+## 1. Clone the repository
+
+```bash
+git clone <repository-url>
+cd backend_assignment
+```
+
+## 2. Create and activate the virtual environment
+
+### Windows PowerShell
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+```
+
+## 3. Install dependencies
+
+```powershell
+pip install -r requirements.txt
+```
+
+## 4. Configure PostgreSQL
+
+Create a PostgreSQL database named:
+
+```text
+events_platform
+```
+
+Configure the PostgreSQL password through the environment variable:
+
+```powershell
+$env:POSTGRES_PASSWORD="your-postgres-password"
+```
+
+The project reads the PostgreSQL password from the environment rather than storing the credential directly in the repository.
+
+## 5. Apply migrations
+
+```powershell
+.\venv\Scripts\python.exe manage.py migrate
+```
+
+## 6. Run Django checks
+
+```powershell
+.\venv\Scripts\python.exe manage.py check
+```
+
+## 7. Run the automated tests
+
+```powershell
+.\venv\Scripts\python.exe manage.py test -v 2
+```
+
+Expected verified result for the submitted implementation:
+
+```text
+Ran 16 tests in 156.800s
+
+OK
+```
+
+---
+
+# 16. Evaluation Convenience
+
+The repository includes:
+
+* Django migrations
+* Automated tests
+* `PROMPT_LOG.md`
+* `DECISIONS.md`
+* `DEBUGGING.md`
+* `README.md`
+
+The assignment's required concurrency, re-enrollment, and OTP scenarios are represented in the automated test suite, allowing the core behaviour to be evaluated without requiring a separate Postman collection.
+
+A Postman collection was therefore not required for the submission because the assignment explicitly states that API examples are optional when the tests and README are strong.
+
+---
+
+# 17. Documentation
+
+### `PROMPT_LOG.md`
+
+Records material AI-assisted development work, including prompts, what was used, what was changed or rejected, and verification.
+
+It also documents cases where AI output required correction.
+
+### `DECISIONS.md`
+
+Documents the important engineering decisions and their trade-offs, including the concurrency, enrollment lifecycle, and OTP behaviour.
+
+### `DEBUGGING.md`
+
+Documents real implementation/debugging issues, including the symptom, diagnosis, root cause, fix, and verification.
+
+---
+
+# 18. What I Would Improve With Another Day
+
+If I had another 24 hours, I would focus on improvements that build on the existing backend rather than expanding the scope unnecessarily:
+
+1. **Increase automated test coverage further** around additional edge cases and failure paths.
+2. **Improve API documentation** with more complete request/response examples for each endpoint.
+3. **Add more evaluation-friendly sample data/setup** so the main flows can be demonstrated quickly.
+4. **Perform additional security and concurrency testing** under a wider range of request patterns.
+5. **Improve deployment readiness** with additional environment and operational configuration.
+
+The priority would remain correctness, security, reliability, and maintainability rather than adding unrelated features.
+
+---
+
+# 19. Project Status
+
+The submitted implementation has been verified with PostgreSQL and the complete test suite.
+
+```text
+Django checks          PASS
+Migration check        PASS
+PostgreSQL migration   PASS
+Automated tests        16 / 16 PASS
+Concurrency challenge  PASS
+Re-enrollment          PASS
+OTP resend challenge   PASS
+Git working tree       CLEAN
+```
+
+The project is structured around the assignment's core requirements and keeps the implementation focused on a compact, testable Django REST backend.
+
